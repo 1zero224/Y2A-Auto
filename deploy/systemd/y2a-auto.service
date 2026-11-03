@@ -1,0 +1,32 @@
+[Unit]
+Description=Y2A-Auto local drafts and YouTube monitoring
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=y2a-auto
+Group=y2a-auto
+WorkingDirectory=/srv/storage/apps/y2a-auto/source
+Environment=TZ=Asia/Shanghai
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONIOENCODING=utf-8
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=PATH=/srv/storage/apps/y2a-auto/venv/bin:/usr/local/bin:/usr/bin:/bin
+Environment=HOST=127.0.0.1
+Environment=PORT=18530
+EnvironmentFile=-/srv/storage/apps/y2a-auto/runtime.env
+ExecStart=/srv/storage/apps/y2a-auto/venv/bin/python app.py
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=45
+KillSignal=SIGINT
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/srv/storage/apps/y2a-auto/data
+
+[Install]
+WantedBy=multi-user.target
