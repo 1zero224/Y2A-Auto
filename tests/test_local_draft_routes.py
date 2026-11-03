@@ -53,3 +53,18 @@ def test_failed_save_never_starts_publish(client, monkeypatch):
     response = client.post(f'/tasks/{tid}/edit', data={'action': 'force_upload'})
     assert response.status_code == 302
     publish.assert_not_called()
+
+
+def test_public_callback_limits_and_storage_failures(client, monkeypatch):
+    monkeypatch.setattr(web, 'load_config', lambda: {'YOUTUBE_WEBSUB_ENABLED': True,
+        'password_protection_enabled': True})
+    service = Mock()
+    monkeypatch.setattr(web.youtube_monitor, 'get_discovery', lambda: service)
+    service.verify.return_value = 'challenge'
+    assert client.get('/youtube/websub').data == b'challenge'
+    assert client.post('/youtube/websub', data=b'x' * (1024 * 1024 + 1)).status_code == 413
+    service.receive.side_effect = ValueError('bad signature')
+    assert client.post('/youtube/websub', data=b'<feed/>').status_code == 400
+    service.receive.side_effect = RuntimeError('disk unavailable')
+    assert client.post('/youtube/websub', data=b'<feed/>').status_code == 503
+    assert client.get('/youtube_monitor/discovery_status').status_code == 302

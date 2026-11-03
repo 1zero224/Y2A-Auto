@@ -744,7 +744,7 @@ def _build_settings_progress_reporter(operation_id: str | None):
 #   - 数值字段用于类型归一化，非法值回退到 DEFAULT_CONFIG 中的默认值。
 # tests/test_settings_template_layout.py 会断言模板控件与这些集合一致。
 SETTINGS_CHECKBOX_FIELDS = list(dict.fromkeys([
-    'BILIBILI_LOCAL_DRAFT_ENABLED',
+    'BILIBILI_LOCAL_DRAFT_ENABLED', 'YOUTUBE_WEBSUB_ENABLED',
     'AUTO_MODE_ENABLED', 'TRANSLATE_TITLE', 'TRANSLATE_DESCRIPTION',
     'UPLOAD_APPEND_REPOST_NOTICE', 'DELETE_DOWNLOAD_FILES_AFTER_UPLOAD',
     'GENERATE_TAGS', 'YOUTUBE_UPLOADER_AS_FIRST_TAG', 'RECOMMEND_PARTITION',
@@ -783,6 +783,7 @@ SETTINGS_CHECKBOX_FIELDS = list(dict.fromkeys([
 ] + SPEECH_PIPELINE_CHECKBOXES))
 
 SETTINGS_INT_FIELDS = list(dict.fromkeys([
+    'YOUTUBE_RECONCILE_SECONDS',
     'MAX_CONCURRENT_TASKS', 'MAX_CONCURRENT_UPLOADS',
     'LOG_CLEANUP_HOURS', 'LOG_CLEANUP_INTERVAL',
     'DOWNLOAD_CLEANUP_HOURS', 'DOWNLOAD_CLEANUP_INTERVAL',
@@ -2202,6 +2203,49 @@ def tasks_event_stream():
     response.headers['Connection'] = 'keep-alive'
     response.headers['Transfer-Encoding'] = 'chunked'
     return response
+
+@app.route('/youtube/websub', methods=['GET', 'POST'])
+def youtube_websub():
+    """Public protocol endpoint; signed notifications only, no UI authentication."""
+    if not load_config().get('YOUTUBE_WEBSUB_ENABLED'):
+        return Response('WebSub disabled', status=404)
+    try:
+        discovery = youtube_monitor.get_discovery()
+        if request.method == 'GET':
+            return Response(discovery.verify(request.args), mimetype='text/plain')
+        if request.content_length and request.content_length > 1024 * 1024:
+            return Response('Payload too large', status=413)
+        body = request.stream.read(1024 * 1024 + 1)
+        if len(body) > 1024 * 1024:
+            return Response('Payload too large', status=413)
+        discovery.receive(body, request.headers.get('X-Hub-Signature-256') or request.headers.get('X-Hub-Signature'))
+        return Response(status=204)
+    except (ValueError, TypeError) as exc:
+        return Response(str(exc), status=400)
+    except Exception:
+        logger.exception('WebSub reception failed')
+        return Response('Notification not stored', status=503)
+
+
+@app.route('/youtube_monitor/discovery_status')
+@login_required
+def youtube_discovery_status():
+    return jsonify(youtube_monitor.get_discovery().status())
+
+
+@app.route('/youtube_monitor/discovery', methods=['GET', 'POST'])
+@login_required
+def youtube_discovery_page():
+    discovery = youtube_monitor.get_discovery()
+    if request.method == 'POST':
+        try:
+            discovery.retry(int(request.form.get('config_id', '0')), request.form.get('video_id', ''))
+            flash('已安排重新检查。', 'success')
+        except ValueError as exc:
+            flash(str(exc), 'warning')
+        return redirect(url_for('youtube_discovery_page'))
+    return render_template('youtube_discovery.html', status=discovery.status())
+
 
 @app.route('/drafts')
 @login_required
@@ -4403,6 +4447,8 @@ if __name__ == '__main__':
     finally:
         # 关闭全局任务处理器
         shutdown_global_task_processor()
+        if youtube_monitor.scheduler.running:
+            youtube_monitor.scheduler.shutdown(wait=False)
 
         if log_cleanup_scheduler:
             log_cleanup_scheduler.shutdown()

@@ -132,6 +132,8 @@ class YouTubeMonitor:
         self.youtube: Optional[Any] = None
         self.youtube_http: Optional[httplib2.Http] = None
         self.scheduler = BackgroundScheduler()
+        self._discovery_api_lock = threading.RLock()
+        self._discovery = None
         self.db_path = os.path.join(get_app_subdir('db'), 'youtube_monitor.db')
         self._last_fetch_had_errors = False
         self._api_proxy_enabled = False
@@ -871,7 +873,19 @@ class YouTubeMonitor:
             logger.error(f"删除监控配置失败，ID: {config_id}, 错误: {str(e)}")
             raise
     
+    def get_discovery(self):
+        if self._discovery is None:
+            from .youtube_discovery import YouTubeDiscovery
+            self._discovery = YouTubeDiscovery(self, load_config, add_task)
+        return self._discovery
+
     def run_monitor(self, config_id: int) -> Tuple[bool, str]:
+        if not hasattr(self, '_discovery_api_lock'):
+            self._discovery_api_lock = threading.RLock()
+        with self._discovery_api_lock:
+            return self._run_monitor(config_id)
+
+    def _run_monitor(self, config_id):
         """执行监控任务"""
         logger.info(f"开始执行监控任务，配置ID: {config_id}")
         
@@ -900,6 +914,11 @@ class YouTubeMonitor:
             return False, "监控配置已禁用，跳过执行"
 
         logger.info(f"执行监控配置: {config['name']} (ID: {config_id})")
+        if (load_config().get('YOUTUBE_WEBSUB_ENABLED') and config.get('channel_ids')
+                and config.get('channel_mode') == 'latest' and config.get('schedule_type') == 'auto'
+                and config.get('auto_add_to_tasks')):
+            self.get_discovery().tick()
+            return True, '已执行推送候选检查与 Data API 补查'
         logger.info(f"监控类型: {config.get('monitor_type', 'youtube_search')}, "
                    f"频道模式: {config.get('channel_mode', 'latest')}")
         
@@ -1821,11 +1840,12 @@ class YouTubeMonitor:
     
     def _is_video_processed(self, video_id, config_id):
         """检查视频是否已经处理过"""
+        config = self.get_monitor_config(config_id) or {}
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             cursor.execute(
-                'SELECT id FROM monitor_history WHERE video_id = ? AND config_id = ?',
-                (video_id, config_id)
+                'SELECT id FROM monitor_history WHERE video_id = ? AND config_id = ? AND (? = 0 OR added_to_tasks = 1)',
+                (video_id, config_id, int(bool(config.get('auto_add_to_tasks'))))
             )
             return cursor.fetchone() is not None
     
@@ -1839,7 +1859,8 @@ class YouTubeMonitor:
                     config_id, video_id, video_type, video_title, channel_title,
                     view_count, like_count, comment_count, duration,
                     published_at, added_to_tasks
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                  WHERE NOT EXISTS (SELECT 1 FROM monitor_history WHERE config_id=? AND video_id=?)
             ''', (
                 config_id,
                 video_info['id'],
@@ -1851,7 +1872,8 @@ class YouTubeMonitor:
                 video_info['comment_count'],
                 video_info['duration'],
                 video_info['published_at'],
-                1 if auto_add_to_tasks else 0
+                0,
+                config_id, video_info['id']
             ))
             
             conn.commit()
@@ -1867,11 +1889,17 @@ class YouTubeMonitor:
                         (video_info['id'], config_id)
                     )
     
+    def record_discovered_video(self, video_info, config_id):
+        self._save_video_history(video_info, config_id, auto_add_to_tasks=False)
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute('UPDATE monitor_history SET added_to_tasks=1 WHERE config_id=? AND video_id=?',
+                         (config_id, video_info['id']))
+
     def _add_video_to_tasks(self, video_info, auto_start=True):
         """将视频添加到任务队列"""
         try:
             video_url = f"https://www.youtube.com/watch?v={video_info['id']}"
-            task_id = add_task(video_url)
+            task_id = add_task(video_url, source_key='youtube:' + video_info['id'])
             
             if task_id:
                 logger.info(f"视频已添加到任务队列: {video_info['title']}, 任务ID: {task_id}")
@@ -2440,6 +2468,13 @@ class YouTubeMonitor:
         从而绕过每日配额预算。该立即检查同样走 _fetch_search_videos，会计入跨配置每日预算。
         """
         logger.info("开始启动所有自动调度的监控任务")
+        if load_config().get('YOUTUBE_WEBSUB_ENABLED'):
+            self.scheduler.add_job(self.get_discovery().tick, 'interval', seconds=5,
+                                   id='youtube_discovery', replace_existing=True,
+                                   max_instances=1, coalesce=True,
+                                   next_run_time=datetime.now())
+        elif self.scheduler.get_job('youtube_discovery'):
+            self.scheduler.remove_job('youtube_discovery')
         
         configs = self.get_monitor_configs()
         auto_configs = [config for config in configs if config['enabled'] and config['schedule_type'] == 'auto']

@@ -35,8 +35,27 @@ def test_human_edits_survive_ai_regeneration_and_database_reopen(database):
     assert tm.get_task(task)['video_title_translated'] == '人工标题'
 
 
+def test_concurrent_monitor_events_create_one_task(database):
+    barrier = threading.Barrier(5)
+    def add(_):
+        barrier.wait()
+        return tm.add_task('https://www.youtube.com/watch?v=aaaaaaaaaaa', 'bilibili',
+                           source_key='youtube:aaaaaaaaaaa')
+    with ThreadPoolExecutor(5) as pool:
+        ids = list(pool.map(add, range(5)))
+    assert None not in ids and len(set(ids)) == 1
+    with tm.get_db_connection() as db:
+        assert db.execute('SELECT count(*) FROM tasks').fetchone()[0] == 1
 
 
+def test_deleted_task_is_not_returned_as_success_and_old_tasks_reused(database):
+    url = 'https://www.youtube.com/watch?v=aaaaaaaaaaa'
+    legacy = tm.add_task(url, 'bilibili')
+    assert tm.add_task(url, 'bilibili', source_key='youtube:aaaaaaaaaaa') == legacy
+    assert tm.delete_task(legacy, delete_files=False)
+    replacement = tm.add_task(url, 'bilibili', source_key='youtube:aaaaaaaaaaa')
+    assert replacement and replacement != legacy
+    assert tm.get_task(replacement)
 
 
 def test_batch_retry_does_not_publish_local_drafts(database, monkeypatch):

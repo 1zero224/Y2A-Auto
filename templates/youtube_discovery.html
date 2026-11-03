@@ -1,0 +1,15 @@
+{% extends 'base.html' %}
+{% block title %}YouTube 推送与补查 - Y2A-Auto{% endblock %}
+{% block content %}
+<h2>YouTube 推送与补查</h2>
+<p>推送负责触发，Data API 定期补查。等待中的视频按退避间隔自动检查；超过七天未就绪转为需要处理，可手动重试。</p>
+<a href="{{ url_for('youtube_monitor_index') }}" class="btn btn-outline-secondary mb-3">返回监控</a>
+<h4>频道订阅</h4>
+<div class="table-responsive"><table class="table"><thead><tr><th>频道</th><th>订阅到期</th><th>最近补查</th><th>异常</th></tr></thead>
+<tbody>{% for c in status.channels %}<tr><td>{{ c.channel_id }}</td><td>{{ c.expires_display }}</td><td>{{ c.last_poll_display }}</td><td>{{ c.error or '无' }}</td></tr>{% endfor %}</tbody></table></div>
+<h4>最近候选</h4>
+<div class="table-responsive"><table class="table"><thead><tr><th>视频</th><th>状态</th><th>重试次数</th><th>原因</th><th>操作</th></tr></thead><tbody>
+{% for c in status.candidates %}<tr><td><a href="https://www.youtube.com/watch?v={{ c.video_id }}" target="_blank" rel="noopener">{{ c.video_id }}</a></td><td>{{ {'waiting':'等待就绪','ready':'已处理','attention':'需要处理','ignored':'筛选排除'}.get(c.state,c.state) }}</td><td>{{ c.attempts }}</td><td>{{ c.error or '' }}</td><td>
+{% if c.task_id %}<a href="{{ url_for('edit_task',task_id=c.task_id) }}">查看任务</a>{% elif c.state != 'ready' %}<form method="post"><input type="hidden" name="config_id" value="{{ c.config_id }}"><input type="hidden" name="video_id" value="{{ c.video_id }}"><button class="btn btn-sm btn-outline-primary">重新检查</button></form>{% endif %}
+</td></tr>{% endfor %}</tbody></table></div>
+{% endblock %}

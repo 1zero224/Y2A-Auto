@@ -1365,6 +1365,7 @@ def init_db():
     except Exception:
         pass
     cursor = conn.cursor()
+    cursor.execute('CREATE TABLE IF NOT EXISTS monitor_task_keys (source_key TEXT PRIMARY KEY, task_id TEXT NOT NULL)')
     
     # 创建tasks表
     cursor.execute('''
@@ -1701,7 +1702,7 @@ def get_db_connection():
         logger.debug(f"设置SQLite连接参数失败，将使用默认参数: {e}")
     return conn
 
-def add_task(youtube_url, upload_target=None):
+def add_task(youtube_url, upload_target=None, source_key=None):
     """
     添加新任务到数据库
     
@@ -1724,6 +1725,19 @@ def add_task(youtube_url, upload_target=None):
                 normalized_target = normalize_upload_target(cfg.get('UPLOAD_TARGET_DEFAULT', UPLOAD_TARGET_ACFUN))
             except Exception:
                 normalized_target = UPLOAD_TARGET_ACFUN
+        if source_key:
+            conn.execute('BEGIN IMMEDIATE')
+            row = conn.execute('SELECT k.task_id FROM monitor_task_keys k JOIN tasks t ON t.id=k.task_id WHERE k.source_key = ?', (source_key,)).fetchone()
+            if row:
+                return row['task_id']
+            conn.execute('DELETE FROM monitor_task_keys WHERE source_key=?', (source_key,))
+            # Lazy migration of pre-WebSub tasks: reuse their canonical URL identity.
+            row = conn.execute('SELECT id FROM tasks WHERE youtube_url=? ORDER BY created_at LIMIT 1', (youtube_url,)).fetchone()
+            if row:
+                conn.execute('INSERT INTO monitor_task_keys VALUES (?,?)', (source_key, row['id']))
+                conn.commit()
+                return row['id']
+            conn.execute('INSERT INTO monitor_task_keys VALUES (?, ?)', (source_key, task_id))
         conn.execute(
             'INSERT INTO tasks (id, youtube_url, upload_target, status) VALUES (?, ?, ?, ?)',
             (task_id, youtube_url, normalized_target, TASK_STATES['PENDING'])

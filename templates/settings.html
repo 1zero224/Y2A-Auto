@@ -687,6 +687,15 @@
                                                         <div class="form-group">
                                                             <label for="youtube-api-key" class="form-label">YouTube Data API v3 密钥</label>
                                                             <input type="password" id="youtube-api-key" name="YOUTUBE_API_KEY" value="{{ config.YOUTUBE_API_KEY }}" class="form-control">
+                                                            <label class="checkbox-label mt-3">
+                                                                <input type="checkbox" name="YOUTUBE_WEBSUB_ENABLED" {% if config.get('YOUTUBE_WEBSUB_ENABLED', False) %}checked{% endif %}>
+                                                                WebSub 推送＋Data API 补查（自动调度的频道 latest 监控）
+                                                            </label>
+                                                            <label for="websub-callback" class="form-label mt-2">公网 HTTPS 回调地址</label>
+                                                            <input id="websub-callback" type="url" name="YOUTUBE_WEBSUB_CALLBACK_URL" value="{{ config.get('YOUTUBE_WEBSUB_CALLBACK_URL', '') }}" placeholder="https://your-domain/youtube/websub" class="form-control">
+                                                            <label for="reconcile-seconds" class="form-label mt-2">Data API 补查间隔（秒，最低 30）</label>
+                                                            <input id="reconcile-seconds" type="number" name="YOUTUBE_RECONCILE_SECONDS" min="30" value="{{ config.get('YOUTUBE_RECONCILE_SECONDS', 120) }}" class="form-control">
+                                                            <p class="help-text">需要频道 ID、latest 模式、自动调度和自动入队。首次启用以当前时间为起点；旧视频请用历史模式。推送订阅失败时仍补查。<a href="{{ url_for('youtube_discovery_page') }}">查看订阅与候选状态</a></p>
                                                             <p class="help-text">配置后可在 <a href="{{ url_for('youtube_monitor_index') }}">YouTube 监控</a> 页面启用自动监控。</p>
                                                         </div>
                                                     </div>
