@@ -273,7 +273,9 @@ def _build_quality_retry_strategies(config: dict[str, Any] | None, has_ffmpeg: b
         primary_selector = f'bestvideo[height<={max_height}]+bestaudio/best[height<={max_height}]'
         fallback_selector = f'best[height<={max_height}]'
     else:
-        primary_selector = 'bestvideo+bestaudio'
+        # YouTube HLS BANDWIDTH can greatly overstate actual average bitrate.
+        # Compare direct tracks first; only use segmented tracks if none exist.
+        primary_selector = '(bestvideo[protocol=https]+bestaudio[protocol=https])/(bestvideo+bestaudio)'
         fallback_selector = 'best'
 
     strategies: list[dict[str, Any]] = []

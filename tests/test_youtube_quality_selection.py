@@ -35,7 +35,7 @@ def test_same_resolution_prefers_high_bitrate_over_av1_and_preserves_cap():
 def test_highest_retry_never_switches_to_combined_low_quality_stream():
     plan=_build_quality_retry_strategies({'YOUTUBE_DOWNLOAD_QUALITY_MODE':'highest'},True)
     assert len(plan['strategies'])==1
-    assert plan['strategies'][0]['selector']=='bestvideo+bestaudio'
+    assert plan['strategies'][0]['selector']=='(bestvideo[protocol=https]+bestaudio[protocol=https])/(bestvideo+bestaudio)'
 
 
 def test_format_retry_keeps_quality_sort_without_duplicate_arguments():
