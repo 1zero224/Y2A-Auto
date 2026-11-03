@@ -558,6 +558,25 @@ def _safe_join_task_dir(task_dir_real: str, *parts: str) -> str | None:
         return None
 
 
+def _get_downloadable_task_video(task):
+    """Serve only the task's current completed media, inside its own directory."""
+    if not task or task.get('status') in ('pending', 'downloading', 'encoding_video'):
+        return None
+    try:
+        directory = _get_task_dir_real(task['id'])
+        raw = str(task.get('video_path_local') or '')
+        if not raw:
+            return None
+        path = os.path.realpath(raw if os.path.isabs(raw) else os.path.join(get_app_subdir('downloads'), '..', raw))
+        if os.path.commonpath([directory, path]) != directory:
+            return None
+        if os.path.splitext(path)[1].lower() not in ('.mp4', '.mkv', '.webm', '.mov', '.flv', '.avi', '.m4v'):
+            return None
+        return path if os.path.isfile(path) and os.path.getsize(path) > 0 else None
+    except (KeyError, ValueError, OSError):
+        return None
+
+
 TITLE_MATCH_MODES = ('any', 'all')
 
 
@@ -2461,8 +2480,29 @@ def edit_task(task_id):
         has_cover_preview=has_cover_preview,
         has_original_cover_backup=has_original_cover_backup,
         is_custom_cover_active=is_custom_cover_active,
-        current_cover_filename=current_cover_filename
+        current_cover_filename=current_cover_filename,
+        can_download_video=bool(_get_downloadable_task_video(task))
     )
+
+@app.route('/tasks/<task_id>/video/download')
+@login_required
+def download_task_video(task_id):
+    task = get_task(task_id)
+    path = _get_downloadable_task_video(task)
+    if not path:
+        return Response('视频尚未准备好、已清理或不存在。', status=404, mimetype='text/plain')
+    title = str(task.get('video_title_translated') or task.get('video_title_original') or task_id)
+    title = re.sub(r'[\x00-\x1f\x7f<>:"/\\|?*]', '_', title).strip(' .')[:120] or task_id
+    try:
+        response = send_file(path, as_attachment=True,
+                             download_name=title + os.path.splitext(path)[1].lower(),
+                             conditional=True, max_age=0)
+        response.headers['Cache-Control'] = 'private, no-store'
+        response.headers['X-Content-Type-Options'] = 'nosniff'
+        return response
+    except FileNotFoundError:
+        return Response('视频文件已被清理。', status=404, mimetype='text/plain')
+
 
 @app.route('/tasks/<task_id>/cover')
 @login_required
