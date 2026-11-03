@@ -594,7 +594,7 @@
                                                             <div class="form-group">
                                                                 <label for="youtube-download-quality-mode" class="form-label">画质模式</label>
                                                                 <select id="youtube-download-quality-mode" name="YOUTUBE_DOWNLOAD_QUALITY_MODE" class="form-select">
-                                                                    <option value="highest" {% if config.get('YOUTUBE_DOWNLOAD_QUALITY_MODE', 'highest') == 'highest' %}selected{% endif %}>始终最高</option>
+                                                                    <option value="highest" {% if config.get('YOUTUBE_DOWNLOAD_QUALITY_MODE', 'highest') == 'highest' %}selected{% endif %}>最高画质＋最高音质</option>
                                                                     <option value="manual" {% if config.get('YOUTUBE_DOWNLOAD_QUALITY_MODE', 'highest') == 'manual' %}selected{% endif %}>手动选择</option>
                                                                 </select>
                                                             </div>
@@ -615,7 +615,7 @@
                                                         </div>
 
                                                         <div class="col-12">
-                                                            <p class="help-text mb-0">手动模式会下载不高于所选分辨率的最高可用版本，不保证精确命中。</p>
+                                                            <p class="help-text mb-0">自动模式分别选择最高分辨率、帧率和动态范围的视频，同档位优先高码率；同语言音轨优先高码率、采样率和声道，再无损合并，不重新编码。不同编码的码率不能直接证明视觉或听觉质量。自动模式失败时不降级为低画质合并流。手动模式仍遵守分辨率上限。</p>
                                                         </div>
                                                 </div>
 

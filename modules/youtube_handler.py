@@ -38,6 +38,9 @@ _YOUTUBE_USER_AGENT = (
 _INTERNAL_YT_DLP_FLAG = '--y2a-internal-yt-dlp'
 _YT_DLP_UNAVAILABLE_MESSAGE = '本地 yt-dlp 不可用，请重新安装依赖或重新下载完整便携包。'
 _VIDEO_OUTPUT_EXTENSIONS = frozenset({'.mp4', '.mkv', '.webm', '.avi', '.mov', '.flv', '.m4v'})
+# Resolve the best resolution/fps/HDR tier before comparing bitrate, not codec.
+# Language stays first to avoid selecting dubbed/audio-description tracks by size.
+_QUALITY_FORMAT_SORT = 'lang,res,fps,hdr:12,br,asr,channels'
 
 
 class YtDlpUnavailableError(RuntimeError):
@@ -270,7 +273,7 @@ def _build_quality_retry_strategies(config: dict[str, Any] | None, has_ffmpeg: b
         primary_selector = f'bestvideo[height<={max_height}]+bestaudio/best[height<={max_height}]'
         fallback_selector = f'best[height<={max_height}]'
     else:
-        primary_selector = 'bestvideo+bestaudio/best'
+        primary_selector = 'bestvideo+bestaudio'
         fallback_selector = 'best'
 
     strategies: list[dict[str, Any]] = []
@@ -280,11 +283,12 @@ def _build_quality_retry_strategies(config: dict[str, Any] | None, has_ffmpeg: b
             'merge_output_format': 'mp4',
             'label': 'bestvideo+bestaudio',
         })
-    strategies.append({
-        'selector': fallback_selector,
-        'merge_output_format': None,
-        'label': 'best',
-    })
+    if manual or not has_ffmpeg:
+        strategies.append({
+            'selector': fallback_selector,
+            'merge_output_format': None,
+            'label': 'best',
+        })
     return {
         'mode': mode,
         'max_height': max_height if manual else None,
@@ -313,6 +317,12 @@ def _set_yt_dlp_format_options(
         idx = cmd.index('--merge-output-format')
         del cmd[idx:idx + 2]
     cmd.extend(['--format', selector])
+    while '--format-sort' in cmd:
+        idx = cmd.index('--format-sort')
+        del cmd[idx:idx + 2]
+    cmd.extend(['--format-sort', _QUALITY_FORMAT_SORT])
+    if '--format-sort-force' not in cmd:
+        cmd.append('--format-sort-force')
     if merge_output_format:
         cmd.extend(['--merge-output-format', merge_output_format])
 
@@ -826,6 +836,8 @@ def download_video_data(youtube_url, task_id=None, cookies_file_path=None, skip_
         quality_strategy_index = 0
         if not skip_download:
             quality_plan = _build_quality_retry_strategies(config, has_ffmpeg)
+            if quality_plan['mode'] == 'highest' and not has_ffmpeg:
+                return False, '最高画质和音质需要 FFmpeg 合并独立音视频，请先配置 FFmpeg；未降级下载。'
             quality_strategy = quality_plan['strategies'][quality_strategy_index]
             _set_yt_dlp_format_options(
                 cmd,

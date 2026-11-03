@@ -105,7 +105,7 @@ class DownloadLogRedactionTests(unittest.TestCase):
                 'test_video_availability',
                 return_value=(True, "id\ttitle", None),
             ),
-            mock.patch.object(youtube_handler, 'get_ffmpeg_path', return_value=None),
+            mock.patch.object(youtube_handler, 'get_ffmpeg_path', return_value='/test/ffmpeg'),
             mock.patch.object(youtube_handler, 'is_docker_env', return_value=False),
         ]
 
