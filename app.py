@@ -31,6 +31,8 @@ from modules.bilibili_auth import BilibiliQrLoginSession
 from modules.bilibili_uploader import bilibili_submit_api_badge
 from queue import Empty
 from modules.youtube_monitor import youtube_monitor
+from modules.local_drafts import serialize_edits
+from modules.task_manager import draft_edit_guard
 from modules.speech_pipeline_settings import (
     SPEECH_PIPELINE_CHECKBOXES,
     SPEECH_PIPELINE_FLOAT_FIELDS,
@@ -742,6 +744,7 @@ def _build_settings_progress_reporter(operation_id: str | None):
 #   - 数值字段用于类型归一化，非法值回退到 DEFAULT_CONFIG 中的默认值。
 # tests/test_settings_template_layout.py 会断言模板控件与这些集合一致。
 SETTINGS_CHECKBOX_FIELDS = list(dict.fromkeys([
+    'BILIBILI_LOCAL_DRAFT_ENABLED',
     'AUTO_MODE_ENABLED', 'TRANSLATE_TITLE', 'TRANSLATE_DESCRIPTION',
     'UPLOAD_APPEND_REPOST_NOTICE', 'DELETE_DOWNLOAD_FILES_AFTER_UPLOAD',
     'GENERATE_TAGS', 'YOUTUBE_UPLOADER_AS_FIRST_TAG', 'RECOMMEND_PARTITION',
@@ -2200,6 +2203,14 @@ def tasks_event_stream():
     response.headers['Transfer-Encoding'] = 'chunked'
     return response
 
+@app.route('/drafts')
+@login_required
+def local_drafts():
+    drafts = get_tasks_by_status(TASK_STATES['READY_FOR_UPLOAD'])
+    drafts = [get_task(t['id']) for t in drafts if t.get('upload_target') in ('bilibili', 'both')]
+    return render_template('local_drafts.html', tasks=drafts)
+
+
 @app.route('/manual_review')
 @login_required
 def manual_review():
@@ -2245,11 +2256,15 @@ def edit_task(task_id):
         # 多值同名 action 时显式优先匹配 force_upload（而非取 DOM 顺序第一个）。
         action = _resolve_edit_task_action(request.form)
         redirect_target = url_for('edit_task', task_id=task_id)
+        if task.get('status') == TASK_STATES['UPLOADING']:
+            flash('正在投稿，请等待本次操作结束后再编辑。', 'warning')
+            return redirect(redirect_target)
 
         if action == 'replace_cover':
             try:
                 cover_file = request.files.get('cover_file')
-                _replace_task_cover(task, cover_file)
+                with draft_edit_guard(task_id):
+                    _replace_task_cover(task, cover_file)
                 flash('任务封面已更新。', 'success')
             except Exception as e:
                 logger.warning(f"替换任务 {task_id} 封面失败: {e}")
@@ -2258,7 +2273,8 @@ def edit_task(task_id):
 
         if action == 'restore_cover':
             try:
-                _restore_task_cover(task)
+                with draft_edit_guard(task_id):
+                    _restore_task_cover(task)
                 flash('已恢复原始封面。', 'success')
             except Exception as e:
                 logger.warning(f"恢复任务 {task_id} 原始封面失败: {e}")
@@ -2291,6 +2307,7 @@ def edit_task(task_id):
             'error_message': None,
             'error_category': None,
         }
+        update_data['draft_metadata_json'] = serialize_edits(update_data)
 
         # 只有在安全状态下才允许设置为可上传状态，避免与正在处理的任务产生竞态条件
         safe_states_to_make_uploadable = [
@@ -2317,9 +2334,13 @@ def edit_task(task_id):
                 # 从final_update_data中移除silent，避免重复传递
                 final_update_data.pop('silent')
             
-            update_task(task_id, silent=silent_param, **final_update_data)
+            with draft_edit_guard(task_id):
+                if not update_task(task_id, silent=silent_param, **final_update_data):
+                    raise RuntimeError('稿件信息保存失败')
         except Exception as e:
             logger.warning(f"update_task调用失败: {e}")
+            flash('稿件信息保存失败，本次未启动投稿。', 'danger')
+            return redirect(redirect_target)
         logger.info(f"任务 {task_id} 信息已更新")
         updated_task = get_task(task_id)
         if action == 'force_upload':
@@ -3752,6 +3773,9 @@ def cleanup_downloads(hours: int):
             path = os.path.join(downloads_dir, entry)
             try:
                 if os.path.isdir(path):
+                    task = get_task(entry)
+                    if task and task.get('status') != TASK_STATES['COMPLETED']:
+                        continue  # Keep local drafts and in-progress media until explicitly deleted.
                     # check last modification
                     mtime = os.path.getmtime(path)
                     if mtime < cutoff:

@@ -271,6 +271,11 @@
                                                     </button>
                                                     <div class="collapse mt-3" id="advancedOverviewPublishing">
                                                         <label class="checkbox-label">
+                                                            <input type="checkbox" name="BILIBILI_LOCAL_DRAFT_ENABLED" {% if config.get('BILIBILI_LOCAL_DRAFT_ENABLED', True) %}checked{% endif %}>
+                                                            B站任务只准备工具内草稿，点击投稿后才上传并提交
+                                                        </label>
+                                                        <p class="help-text">开启后，即使启用了无人值守，B站及双平台任务也会停在本地待投稿。标题和简介翻译沿用各自开关。<a href="{{ url_for('local_drafts') }}">查看本地草稿</a></p>
+                                                        <label class="checkbox-label">
                                                             <input type="checkbox" name="YOUTUBE_UPLOADER_AS_FIRST_TAG" {% if config.get('YOUTUBE_UPLOADER_AS_FIRST_TAG', False) %}checked{% endif %}>
                                                             将 YouTube 上传者作为首标签
                                                         </label>

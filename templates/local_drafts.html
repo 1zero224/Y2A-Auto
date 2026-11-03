@@ -1,0 +1,16 @@
+{% extends 'base.html' %}
+{% block title %}本地草稿 - Y2A-Auto{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <h2>本地草稿</h2><a class="btn btn-outline-secondary" href="{{ url_for('tasks') }}">返回任务列表</a>
+</div>
+<p class="text-muted">视频与稿件信息保存在工具内。编辑确认后，点击“上传并投稿”才会上传并提交到 B 站。</p>
+{% for task in tasks %}
+<div class="card mb-3"><div class="card-body">
+  <h5>{{ task.video_title_translated or task.video_title_original or task.youtube_url }}</h5>
+  <p class="text-muted">{{ task.created_at }}</p>
+  <p style="white-space:pre-wrap">{{ (task.description_translated or task.description_original or '')[:300] }}</p>
+  <a class="btn btn-primary" href="{{ url_for('edit_task', task_id=task.id) }}">编辑草稿</a>
+</div></div>
+{% else %}<div class="alert alert-info">暂无准备就绪的 B 站草稿。待下载和翻译完成后会出现在这里；异常任务请到任务列表查看。</div>{% endfor %}
+{% endblock %}

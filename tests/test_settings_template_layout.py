@@ -58,6 +58,7 @@ EXPECTED_PANES = [
 # 调整策略性归属时请同步更新本表——该断言的作用是防止搬运时误放,
 # 而不是禁止有意调整。
 FIELD_TAB_MAP = {
+    'BILIBILI_LOCAL_DRAFT_ENABLED': 'vtab-publish',
     'ACFUN_COOKIES_PATH': 'vtab-accounts',
     'AI_FAILOVER_TIMEOUT_SECONDS': 'vtab-ai',
     'AI_SEGMENTATION_API_KEY': 'vtab-ai',
@@ -251,6 +252,7 @@ FIELD_TAB_MAP = {
 
 # 设置页全部控件 name 的固化集合(唯一值)
 ALL_FIELD_NAMES = frozenset([
+    'BILIBILI_LOCAL_DRAFT_ENABLED',
     'ACFUN_COOKIES_PATH',
     'AI_FAILOVER_TIMEOUT_SECONDS',
     'AI_SEGMENTATION_API_KEY',

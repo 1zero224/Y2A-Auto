@@ -176,7 +176,7 @@
                     <input type="hidden" name="default_action" value="save_metadata">
                     <div class="card mb-4">
                         <div class="card-header">
-                            编辑视频信息
+                            编辑本地稿件信息
                         </div>
                         <div class="card-body">
                             {% if task.error_message %}
@@ -310,17 +310,18 @@
                         </div>
                         <div class="card-body">
                             <div class="mb-3">
-                                <label class="form-label">视频标签（每个不超过20个字符，最多6个）</label>
+                                {% set tag_limit = 12 if (upload_target|default('acfun')) == 'bilibili' else 6 %}
+                                <label class="form-label">视频标签（每个不超过20个字符，最多{{ tag_limit }}个）</label>
                                 <div class="row g-2">
                                     {% set tags = tags_string.split(',') if tags_string else [] %}
-                                    {% for i in range(6) %}
+                                    {% for i in range(tag_limit) %}
                                     <div class="col-6 col-md-4">
                                         <input type="text" class="form-control tag-input" maxlength="20" name="tag_input_{{i}}" placeholder="标签{{i+1}}" value="{{ tags[i]|trim if tags|length > i else '' }}">
                                     </div>
                                     {% endfor %}
                                 </div>
                                 <input type="hidden" id="tags_json" name="tags_json" value="{{ task.tags_generated or '[]' }}">
-                                <div class="form-text">最多可添加6个标签，每个标签不超过20个字符</div>
+                                <div class="form-text">最多可添加{{ tag_limit }}个标签，每个标签不超过20个字符</div>
                             </div>
                             <div id="tags-container" class="mb-3 d-flex flex-wrap gap-2"></div>
                         </div>
@@ -329,10 +330,10 @@
                     <div class="d-flex flex-wrap gap-2 justify-content-between align-items-center">
                         <div class="d-flex flex-wrap gap-2">
                             <button type="submit" class="btn btn-primary">
-                                <i class="bi bi-save me-1"></i> 保存修改
+                                <i class="bi bi-save me-1"></i> 保存本地草稿
                             </button>
                             <button type="submit" name="action" value="force_upload" class="btn btn-success" {% if not can_upload %}disabled{% endif %}>
-                                <i class="bi bi-cloud-upload me-1"></i> 上传到{{ '双平台' if (upload_target|default('acfun')) == 'both' else ('bilibili' if (upload_target|default('acfun')) == 'bilibili' else 'AcFun') }}
+                                <i class="bi bi-cloud-upload me-1"></i> 上传并投稿到{{ '双平台' if (upload_target|default('acfun')) == 'both' else ('bilibili' if (upload_target|default('acfun')) == 'bilibili' else 'AcFun') }}
                             </button>
                         </div>
                         <a href="{{ url_for('tasks') }}" class="btn btn-outline-secondary">取消</a>

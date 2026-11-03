@@ -5,6 +5,7 @@ import os
 import sys
 import time
 import json
+from .local_drafts import apply_draft, requires_manual_publish
 import uuid
 import sqlite3
 import html
@@ -13,6 +14,7 @@ import shutil
 import threading
 import gc
 import shlex
+from contextlib import contextmanager
 from datetime import datetime, timedelta
 from logging.handlers import RotatingFileHandler
 import re
@@ -354,6 +356,15 @@ def _is_task_active(task_id: str) -> bool:
         return False
     with _ACTIVE_TASKS_LOCK:
         return task_id in _ACTIVE_TASK_IDS
+
+
+@contextmanager
+def draft_edit_guard(task_id):
+    """Serialize a draft save with publish/processing claims in this process."""
+    with _ACTIVE_TASKS_LOCK:
+        if task_id in _ACTIVE_TASK_IDS:
+            raise ValueError('任务正在处理或投稿，请等待完成后再编辑。')
+        yield
 
 
 def _get_active_task_ids() -> set:
@@ -1661,6 +1672,9 @@ def init_db():
                 conn.rollback()
                 logger.warning("数据库升级：ASR警告字段数据迁移失败: %s", _em)
 
+        cursor.execute('PRAGMA table_info(tasks)')
+        if 'draft_metadata_json' not in [row[1] for row in cursor.fetchall()]:
+            cursor.execute('ALTER TABLE tasks ADD COLUMN draft_metadata_json TEXT')
         # 兼容历史任务：空 upload_target 默认回填 acfun
         cursor.execute("UPDATE tasks SET upload_target = 'acfun' WHERE upload_target IS NULL OR TRIM(upload_target) = ''")
         conn.commit()
@@ -1780,6 +1794,7 @@ def update_task(task_id, silent=False, **kwargs):
 
     # 白名单验证：只允许更新有效的列名
     ALLOWED_COLUMNS = {
+        'draft_metadata_json': 'draft_metadata_json = ?',
         'youtube_url': 'youtube_url = ?',
         'upload_target': 'upload_target = ?',
         'status': 'status = ?',
@@ -1932,7 +1947,7 @@ def get_task(task_id):
     try:
         cursor = conn.execute('SELECT * FROM tasks WHERE id = ?', (task_id,))
         task = cursor.fetchone()
-        result = dict(task) if task else None
+        result = apply_draft(dict(task)) if task else None
         logger.debug(f"获取任务 {task_id} 结果: {result}")
         return result
     except Exception as e:
@@ -1951,7 +1966,7 @@ def get_all_tasks():
     conn = get_db_connection()
     try:
         cursor = conn.execute('SELECT * FROM tasks ORDER BY created_at DESC')
-        return [dict(row) for row in cursor.fetchall()]
+        return [apply_draft(dict(row)) for row in cursor.fetchall()]
     except Exception as e:
         logger.error(f"获取所有任务失败: {str(e)}")
         return []
@@ -1982,7 +1997,7 @@ def get_tasks_paginated(page=1, per_page=20):
         # 获取分页数据
         cursor = conn.execute('SELECT * FROM tasks ORDER BY created_at DESC LIMIT ? OFFSET ?', 
                             (per_page, offset))
-        tasks = [dict(row) for row in cursor.fetchall()]
+        tasks = [apply_draft(dict(row)) for row in cursor.fetchall()]
         
         return {
             'tasks': tasks,
@@ -2024,7 +2039,7 @@ def get_tasks_by_status(status):
     conn = get_db_connection()
     try:
         cursor = conn.execute('SELECT * FROM tasks WHERE status = ? ORDER BY created_at DESC', (status,))
-        return [dict(row) for row in cursor.fetchall()]
+        return [apply_draft(dict(row)) for row in cursor.fetchall()]
     except Exception as e:
         logger.error(f"获取{status}状态任务失败: {str(e)}")
         return []
@@ -2209,7 +2224,8 @@ def retry_failed_tasks(config=None):
                 error_message=None,
                 upload_progress=None
             )
-            _start_background_upload_retry(task_id, config)
+            if not requires_manual_publish(task, config):
+                _start_background_upload_retry(task_id, config)
             scheduled += 1
             continue
 
@@ -2827,6 +2843,10 @@ class TaskProcessor:
             # 上传失败恢复优化：若目标平台已全部成功则直接完成；若仅部分成功则仅重试失败平台
             upload_target = _get_task_upload_target(task)
             pending_platforms = _get_pending_upload_platforms(task, upload_target)
+            if (requires_manual_publish(task, self.config) and task.get('status') == TASK_STATES['FAILED']
+                    and _has_partial_upload_success(task, upload_target)):
+                update_task(task_id, status=TASK_STATES['READY_FOR_UPLOAD'])
+                return
             if task.get('status') == TASK_STATES['FAILED'] and not pending_platforms and _task_has_upload_response(task, upload_target):
                 task_logger.info("检测到目标平台已全部上传成功，跳过重复流程并标记完成")
                 completed_stages = _mark_stage_done(task_id, completed_stages, PIPELINE_STAGE_UPLOAD_TO_ACFUN)
@@ -2962,7 +2982,8 @@ class TaskProcessor:
                 _raise_if_cancelled(task_id, task_logger)
 
             # 6. 上传
-            if self.config.get('AUTO_MODE_ENABLED', False):
+            task = get_task(task_id)
+            if self.config.get('AUTO_MODE_ENABLED', False) and not requires_manual_publish(task, self.config):
                 # 若已有上传响应，避免重复上传
                 task = get_task(task_id)
                 upload_target = _get_task_upload_target(task)
@@ -2990,7 +3011,7 @@ class TaskProcessor:
                     task_logger.info("任务当前处于人工审核状态，保留待审核状态")
                 elif task['status'] != TASK_STATES['COMPLETED'] and task['status'] != TASK_STATES['FAILED']:
                     # 如果没有开启自动上传或者上传失败，则标记为"准备上传"
-                    if not self.config.get('AUTO_MODE_ENABLED', False) or not _task_has_upload_response(task, upload_target):
+                    if requires_manual_publish(task, self.config) or not self.config.get('AUTO_MODE_ENABLED', False) or not _task_has_upload_response(task, upload_target):
                         update_task(task_id, status=TASK_STATES['READY_FOR_UPLOAD'])
                         task_logger.info("任务处理完成，标记为准备上传")
                     else:
@@ -9863,6 +9884,15 @@ def force_upload_task(task_id, config=None):
     Returns:
         success: 操作是否成功
     """
+    if not _mark_task_active(task_id):
+        return False
+    try:
+        return _force_upload_task_impl(task_id, config)
+    finally:
+        _mark_task_inactive(task_id)
+
+
+def _force_upload_task_impl(task_id, config=None):
     # 获取任务信息
     task = get_task(task_id)
     if not task:
@@ -9949,4 +9979,4 @@ def shutdown_global_task_processor():
         logger.info("全局任务处理器已关闭")
 
 # 初始化数据库
-init_db() 
+init_db()

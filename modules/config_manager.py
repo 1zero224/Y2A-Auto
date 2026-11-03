@@ -50,6 +50,7 @@ def _normalize_submit_api_value(value) -> str:
 # 默认配置
 DEFAULT_CONFIG = {
     "AUTO_MODE_ENABLED": False, # 无人值守自动投稿总开关
+    "BILIBILI_LOCAL_DRAFT_ENABLED": True, # B站任务自动准备，人工点击后才投稿
     "TRANSLATE_TITLE": False,
     "TRANSLATE_DESCRIPTION": False,
     "UPLOAD_APPEND_REPOST_NOTICE": True,
