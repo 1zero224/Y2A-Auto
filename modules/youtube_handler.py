@@ -61,8 +61,9 @@ _BASE_DIR = os.path.realpath(get_app_root_dir())
 def _resolve_safe_cookies_path(cookies_file_path: str, log: logging.Logger | None = None) -> str | None:
     """将 cookies_file_path 解析为安全的绝对路径。
 
-    使用 realpath 解析符号链接后，通过 commonpath 校验路径仍在项目根目录内，
-    防止目录遍历及通过 symlink 越界访问。支持相对路径和位于项目根目录内的绝对路径，
+    使用 realpath 校验项目根目录和部署时的 cookies 持久化目录；允许整个
+    cookies 目录链接到独立数据盘，但不允许该目录内的文件链接逃逸。
+    支持相对路径和位于受信任目录内的绝对路径，
     返回安全的绝对路径，或在路径无效/文件不存在时返回 None。
     """
     _log = log or logger
@@ -70,11 +71,16 @@ def _resolve_safe_cookies_path(cookies_file_path: str, log: logging.Logger | Non
         resolved = os.path.realpath(cookies_file_path)
     else:
         resolved = os.path.realpath(os.path.join(_BASE_DIR, cookies_file_path))
-    try:
-        common = os.path.commonpath([_BASE_DIR, resolved])
-    except ValueError:
-        common = ""
-    if common != _BASE_DIR:
+    trusted_roots = (_BASE_DIR, os.path.realpath(os.path.join(_BASE_DIR, 'cookies')))
+    trusted = False
+    for root in trusted_roots:
+        try:
+            if os.path.commonpath([root, resolved]) == root:
+                trusted = True
+                break
+        except ValueError:
+            continue
+    if not trusted:
         _log.warning(f"检测到位于受信任根目录之外的cookies文件路径，已拒绝: {cookies_file_path}")
         return None
     if not os.path.isfile(resolved):
